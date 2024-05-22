@@ -2,6 +2,7 @@
   import Panel from "./panel.svelte";
 
   export let openPort: (br: number) => Promise<void>;
+  export let openBluetooth: (br: number) => Promise<void>;
 
   const baudRates = [9600, 19200, 38400, 57600, 115200, 230400, 256000, 460800];
   let baudRate = 256000;
@@ -10,6 +11,10 @@
 
   const onClick = async () => {
     openPort(baudRate);
+  };
+
+  const onClickBluetooth = async () => {
+    openBluetooth(baudRate);
   };
 </script>
 
@@ -56,6 +61,12 @@
     <button
       class="hover:bg-blue-500 active:bg-blue-700 bg-blue-600 border rounded-sm border-blue-500 px-2 py-1"
       on:click={onClick}>Select port and connect...</button
+    >
+
+
+    <button
+      class="hover:bg-blue-500 active:bg-blue-700 bg-blue-600 border rounded-sm border-blue-500 px-2 py-1"
+      on:click={openBluetooth}>BLUETOOTH</button
     >
   </form>
 </Panel>

@@ -49,11 +49,12 @@ export type SerialStore = Store & {
   write: (payload: Uint8Array) => void;
 };
 
-export const createSerialReadStore = (
-  port: SerialPort,
-  baudRate: number
+export const createBluetoothReadStore = (
+  server: any
 ): SerialStore => {
   let stopping = false;
+  let sendPassCharacteristic: any | null = null;
+  let readDataCharacteristic: any | null = null;
   const subs: SubscribeCallback[] = [];
   const writeQueue: Uint8Array[] = [];
 
@@ -64,64 +65,45 @@ export const createSerialReadStore = (
   };
 
   const writeForever = async () => {
-    while (!stopping && port.writable != null) {
-      const writer = port.writable.getWriter();
-      try {
-        while (!stopping && writeQueue.length > 0) {
-          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-          const payload = writeQueue.shift()!;
-          writer.write(payload);
-          broadcastEvent({ eventType: "WRITE", payload });
-        }
-      } finally {
-        writer.releaseLock();
+    while (!stopping) {
+      if (writeQueue.length > 0) {
+
+        const payload = writeQueue.shift();
+        sendPassCharacteristic.writeValue(payload)
+
+        broadcastEvent({ eventType: "WRITE", payload });
       }
       await new Promise((x) => setTimeout(x, 100));
     }
   };
 
   const readForever = async () => {
-    while (!stopping && port.readable != null) {
-      const reader = port.readable.getReader();
-      let inputBytes: number[] = [];
-      try {
-        while (!stopping) {
-          const result: ReadResult = await reader.read();
-          const { done, value } = result;
-
-          if (done) {
-            break;
-          }
-
-          value.forEach((v) => {
-            inputBytes.push(v);
-            if (
-              everyEqual(inputBytes.slice(-4), radarDataOutputPayloadTrailer) ||
-              everyEqual(inputBytes.slice(-4), configurationPayloadTrailer)
-            ) {
-              const payload = new Uint8Array(inputBytes);              
-              broadcastEvent({
-                eventType: "READ",
-                payload,
-              });
-              inputBytes = [];
-            }
-          });
-        }
-      } finally {
-        reader.releaseLock();
+    if (!readDataCharacteristic) { return }
+    await readDataCharacteristic.startNotifications();
+    readDataCharacteristic.addEventListener(
+      "characteristicvaluechanged",
+      (event: any) => {
+        broadcastEvent({
+          eventType: "READ",
+          payload: new Uint8Array(event.target.value.buffer),
+        });
       }
-    }
-
-    await port?.close();
-    stopping = false;
-    broadcastEvent({
-      eventType: "DISCONNECT",
-    });
+    );
   };
+  const login = async () => {
+    // this is hex version of the login command with the default password
+    const hexString = "FDFCFBFA0800A80048694C696E6B04030201"; 
+    const byteArray = hexStringToByteArray(hexString);
 
+    sendPassCharacteristic.writeValue(byteArray);
+
+  };
   const connect = async () => {
-    await port.open({ baudRate, parity: "none", stopBits: 1 });
+    const service = await server.getPrimaryService(0xfff0);
+    sendPassCharacteristic = await service.getCharacteristic(0xfff2);
+    readDataCharacteristic = await service.getCharacteristic(0xfff1);
+    
+    login(); // Bluetooth require login
     readForever();
     writeForever();
     broadcastEvent({
@@ -131,7 +113,21 @@ export const createSerialReadStore = (
 
   const disconnect = async () => {
     stopping = true;
+    server.disconnect(); // TODO: refactor
   };
+
+  function hexStringToByteArray(hexString: string): Uint8Array {
+    if (hexString.length % 2 !== 0) {
+      throw new Error("Hex string must have an even number of characters");
+    }
+
+    const byteArray = new Uint8Array(hexString.length / 2);
+    for (let i = 0; i < hexString.length; i += 2) {
+      byteArray[i / 2] = parseInt(hexString.substr(i, 2), 16);
+    }
+
+    return byteArray;
+  }
 
   const subscribe = (cb: SubscribeCallback) => {
     subs.push(cb);
